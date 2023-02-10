@@ -26,10 +26,22 @@
  */
 
 #ifndef BSDIFF_H
-# define BSDIFF_H
+#define BSDIFF_H
 
-# include <stddef.h>
-# include <stdint.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifndef BS_BUILD_BINARY
+#define BS_BUILD_BINARY 0
+#endif
+
+#ifndef BS_DIFF_BINARY
+#define BS_DIFF_BINARY 0
+#endif
+
+#ifndef BS_USE_QSUFSORT
+#define BS_USE_QSUFSORT 0
+#endif
 
 struct bsdiff_stream
 {
@@ -40,6 +52,6 @@ struct bsdiff_stream
 	int (*write)(struct bsdiff_stream* stream, const void* buffer, int size);
 };
 
-int bsdiff(const uint8_t* old, int64_t oldsize, const uint8_t* new, int64_t newsize, struct bsdiff_stream* stream);
+int bsdiff(const uint8_t* old, int32_t oldsize, const uint8_t* new, int32_t newsize, struct bsdiff_stream* stream);
 
 #endif

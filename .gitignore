@@ -9,3 +9,8 @@ NEWS
 README
 ChangeLog
 COPYING
+.vs
+bsdiff/Debug
+bsdiff/x64
+*.vcxproj.user
+bsdiff/Release

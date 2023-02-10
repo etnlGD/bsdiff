@@ -29,12 +29,15 @@
 
 #include <limits.h>
 #include <string.h>
+#include "libsais.h"
 
 #define MIN(x,y) (((x)<(y)) ? (x) : (y))
 
-static void split(int64_t *I,int64_t *V,int64_t start,int64_t len,int64_t h)
+#if BS_USE_QSUFSORT
+
+static void split(int32_t *I,int32_t *V,int32_t start,int32_t len,int32_t h)
 {
-	int64_t i,j,k,x,tmp,jj,kk;
+	int32_t i,j,k,x,tmp,jj,kk;
 
 	if(len<16) {
 		for(k=start;k<start+len;k+=j) {
@@ -93,10 +96,10 @@ static void split(int64_t *I,int64_t *V,int64_t start,int64_t len,int64_t h)
 	if(start+len>kk) split(I,V,kk,start+len-kk,h);
 }
 
-static void qsufsort(int64_t *I,int64_t *V,const uint8_t *old,int64_t oldsize)
+static void qsufsort(int32_t *I,int32_t *V,const uint8_t *old,int32_t oldsize)
 {
-	int64_t buckets[256];
-	int64_t i,h,len;
+	int32_t buckets[256];
+	int32_t i,h,len;
 
 	for(i=0;i<256;i++) buckets[i]=0;
 	for(i=0;i<oldsize;i++) buckets[old[i]]++;
@@ -131,9 +134,11 @@ static void qsufsort(int64_t *I,int64_t *V,const uint8_t *old,int64_t oldsize)
 	for(i=0;i<oldsize+1;i++) I[V[i]]=i;
 }
 
-static int64_t matchlen(const uint8_t *old,int64_t oldsize,const uint8_t *new,int64_t newsize)
+#endif
+
+static int32_t matchlen(const uint8_t *old,int32_t oldsize,const uint8_t *new,int32_t newsize)
 {
-	int64_t i;
+	int32_t i;
 
 	for(i=0;(i<oldsize)&&(i<newsize);i++)
 		if(old[i]!=new[i]) break;
@@ -141,10 +146,10 @@ static int64_t matchlen(const uint8_t *old,int64_t oldsize,const uint8_t *new,in
 	return i;
 }
 
-static int64_t search(const int64_t *I,const uint8_t *old,int64_t oldsize,
-		const uint8_t *new,int64_t newsize,int64_t st,int64_t en,int64_t *pos)
+static int32_t search(const int32_t *I,const uint8_t *old,int32_t oldsize,
+		const uint8_t *new,int32_t newsize,int32_t st,int32_t en,int32_t *pos)
 {
-	int64_t x,y;
+	int32_t x,y;
 
 	if(en-st<2) {
 		x=matchlen(old+I[st],oldsize-I[st],new,newsize);
@@ -167,27 +172,23 @@ static int64_t search(const int64_t *I,const uint8_t *old,int64_t oldsize,
 	};
 }
 
-static void offtout(int64_t x,uint8_t *buf)
+static void offtout(int32_t x,uint8_t *buf)
 {
-	int64_t y;
+	int32_t y;
 
 	if(x<0) y=-x; else y=x;
 
 	buf[0]=y%256;y-=buf[0];
 	y=y/256;buf[1]=y%256;y-=buf[1];
 	y=y/256;buf[2]=y%256;y-=buf[2];
-	y=y/256;buf[3]=y%256;y-=buf[3];
-	y=y/256;buf[4]=y%256;y-=buf[4];
-	y=y/256;buf[5]=y%256;y-=buf[5];
-	y=y/256;buf[6]=y%256;y-=buf[6];
-	y=y/256;buf[7]=y%256;
+	y=y/256;buf[3]=y%256;
 
-	if(x<0) buf[7]|=0x80;
+	if(x<0) buf[3]|=0x80;
 }
 
-static int64_t writedata(struct bsdiff_stream* stream, const void* buffer, int64_t length)
+static int32_t writedata(struct bsdiff_stream* stream, const void* buffer, int32_t length)
 {
-	int64_t result = 0;
+	int32_t result = 0;
 
 	while (length > 0)
 	{
@@ -209,31 +210,37 @@ static int64_t writedata(struct bsdiff_stream* stream, const void* buffer, int64
 struct bsdiff_request
 {
 	const uint8_t* old;
-	int64_t oldsize;
+	int32_t oldsize;
 	const uint8_t* new;
-	int64_t newsize;
+	int32_t newsize;
 	struct bsdiff_stream* stream;
-	int64_t *I;
+	int32_t *I;
 	uint8_t *buffer;
 };
 
 static int bsdiff_internal(const struct bsdiff_request req)
 {
-	int64_t *I,*V;
-	int64_t scan,pos,len;
-	int64_t lastscan,lastpos,lastoffset;
-	int64_t oldscore,scsc;
-	int64_t s,Sf,lenf,Sb,lenb;
-	int64_t overlap,Ss,lens;
-	int64_t i;
+	int32_t *I;
+	int32_t scan,pos,len;
+	int32_t lastscan,lastpos,lastoffset;
+	int32_t oldscore,scsc;
+	int32_t s,Sf,lenf,Sb,lenb;
+	int32_t overlap,Ss,lens;
+	int32_t i;
 	uint8_t *buffer;
-	uint8_t buf[8 * 3];
+	uint8_t buf[4 * 3];
 
-	if((V=req.stream->malloc((req.oldsize+1)*sizeof(int64_t)))==NULL) return -1;
 	I = req.I;
 
+#if BS_USE_QSUFSORT
+	int32_t* V;
+	if((V=req.stream->malloc((req.oldsize+1)*sizeof(int32_t)))==NULL) return -1;
 	qsufsort(I,V,req.old,req.oldsize);
 	req.stream->free(V);
+#else
+	libsais(req.old, &req.I[1], req.oldsize, 0, NULL);
+	req.I[0] = req.oldsize;
+#endif
 
 	buffer = req.buffer;
 
@@ -293,8 +300,8 @@ static int bsdiff_internal(const struct bsdiff_request req)
 			};
 
 			offtout(lenf,buf);
-			offtout((scan-lenb)-(lastscan+lenf),buf+8);
-			offtout((pos-lenb)-(lastpos+lenf),buf+16);
+			offtout((scan-lenb)-(lastscan+lenf),buf+4);
+			offtout((pos-lenb)-(lastpos+lenf),buf+8);
 
 			/* Write control data */
 			if (writedata(req.stream, buf, sizeof(buf)))
@@ -321,12 +328,15 @@ static int bsdiff_internal(const struct bsdiff_request req)
 	return 0;
 }
 
-int bsdiff(const uint8_t* old, int64_t oldsize, const uint8_t* new, int64_t newsize, struct bsdiff_stream* stream)
+int bsdiff(const uint8_t* old, int32_t oldsize, const uint8_t* new, int32_t newsize, struct bsdiff_stream* stream)
 {
 	int result;
 	struct bsdiff_request req;
 
-	if((req.I=stream->malloc((oldsize+1)*sizeof(int64_t)))==NULL)
+	if (oldsize + 1 >= INT_MAX || newsize >= INT_MAX)
+		return -1;
+
+	if((req.I=stream->malloc((oldsize+1)*sizeof(int32_t)))==NULL)
 		return -1;
 
 	if((req.buffer=stream->malloc(newsize+1))==NULL)
@@ -349,97 +359,78 @@ int bsdiff(const uint8_t* old, int64_t oldsize, const uint8_t* new, int64_t news
 	return result;
 }
 
-#if defined(BSDIFF_EXECUTABLE)
-
+#if BS_BUILD_BINARY && BS_DIFF_BINARY
 #include <sys/types.h>
 
-#include <bzlib.h>
-#include <err.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <stdio.h>
 
 static int bz2_write(struct bsdiff_stream* stream, const void* buffer, int size)
 {
-	int bz2err;
-	BZFILE* bz2;
-
-	bz2 = (BZFILE*)stream->opaque;
-	BZ2_bzWrite(&bz2err, bz2, (void*)buffer, size);
-	if (bz2err != BZ_STREAM_END && bz2err != BZ_OK)
+	FILE* bz2 = (FILE*)stream->opaque;
+	size_t writeCount = fwrite((void*)buffer, 1, size, bz2);
+	if (writeCount != size)
 		return -1;
 
 	return 0;
 }
 
+static uint8_t* readFile(const char* file, int* pSize)
+{
+	FILE* f = fopen(file, "rb");
+	fseek(f, 0, SEEK_END);
+	long size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	uint8_t* buf = (uint8_t*)malloc(size);
+	if (buf)
+		fread(buf, 1, size, f);
+
+	*pSize = size;
+	return buf;
+}
+
 int main(int argc,char *argv[])
 {
-	int fd;
-	int bz2err;
-	uint8_t *old,*new;
-	off_t oldsize,newsize;
-	uint8_t buf[8];
-	FILE * pf;
-	struct bsdiff_stream stream;
-	BZFILE* bz2;
+	uint8_t *old ,*new;
+	int oldsize, newsize;
 
-	memset(&bz2, 0, sizeof(bz2));
+	struct bsdiff_stream stream;
 	stream.malloc = malloc;
 	stream.free = free;
 	stream.write = bz2_write;
 
-	if(argc!=4) errx(1,"usage: %s oldfile newfile patchfile\n",argv[0]);
+	if (argc != 4) 
+	{
+		fprintf(stderr, "usage: %s oldfile newfile patchfile\n", argv[0]);
+		return 1;
+	}
 
 	/* Allocate oldsize+1 bytes instead of oldsize bytes to ensure
 		that we never try to malloc(0) and get a NULL pointer */
-	if(((fd=open(argv[1],O_RDONLY,0))<0) ||
-		((oldsize=lseek(fd,0,SEEK_END))==-1) ||
-		((old=malloc(oldsize+1))==NULL) ||
-		(lseek(fd,0,SEEK_SET)!=0) ||
-		(read(fd,old,oldsize)!=oldsize) ||
-		(close(fd)==-1)) err(1,"%s",argv[1]);
-
+	old = readFile(argv[1], &oldsize);
+	new = readFile(argv[2], &newsize);
 
 	/* Allocate newsize+1 bytes instead of newsize bytes to ensure
 		that we never try to malloc(0) and get a NULL pointer */
-	if(((fd=open(argv[2],O_RDONLY,0))<0) ||
-		((newsize=lseek(fd,0,SEEK_END))==-1) ||
-		((new=malloc(newsize+1))==NULL) ||
-		(lseek(fd,0,SEEK_SET)!=0) ||
-		(read(fd,new,newsize)!=newsize) ||
-		(close(fd)==-1)) err(1,"%s",argv[2]);
 
 	/* Create the patch file */
-	if ((pf = fopen(argv[3], "w")) == NULL)
-		err(1, "%s", argv[3]);
+	FILE* pf = fopen(argv[3], "wb");
 
-	/* Write header (signature+newsize)*/
-	offtout(newsize, buf);
-	if (fwrite("ENDSLEY/BSDIFF43", 16, 1, pf) != 1 ||
-		fwrite(buf, sizeof(buf), 1, pf) != 1)
-		err(1, "Failed to write header");
+	fwrite(&newsize, 4, 1, pf);
+	stream.opaque = pf;
 
-
-	if (NULL == (bz2 = BZ2_bzWriteOpen(&bz2err, pf, 9, 0, 0)))
-		errx(1, "BZ2_bzWriteOpen, bz2err=%d", bz2err);
-
-	stream.opaque = bz2;
+	int ret = 0;
 	if (bsdiff(old, oldsize, new, newsize, &stream))
-		err(1, "bsdiff");
+		ret = 1;
 
-	BZ2_bzWriteClose(&bz2err, bz2, 0, NULL, NULL);
-	if (bz2err != BZ_OK)
-		err(1, "BZ2_bzWriteClose, bz2err=%d", bz2err);
-
-	if (fclose(pf))
-		err(1, "fclose");
+	fclose(pf);
 
 	/* Free the memory we used */
 	free(old);
 	free(new);
 
-	return 0;
+	return ret;
 }
-
 #endif

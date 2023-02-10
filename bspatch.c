@@ -28,36 +28,32 @@
 #include <limits.h>
 #include "bspatch.h"
 
-static int64_t offtin(uint8_t *buf)
+static int32_t offtin(uint8_t *buf)
 {
-	int64_t y;
+	int32_t y;
 
-	y=buf[7]&0x7F;
-	y=y*256;y+=buf[6];
-	y=y*256;y+=buf[5];
-	y=y*256;y+=buf[4];
-	y=y*256;y+=buf[3];
+	y=buf[3]&0x7F;
 	y=y*256;y+=buf[2];
 	y=y*256;y+=buf[1];
 	y=y*256;y+=buf[0];
 
-	if(buf[7]&0x80) y=-y;
+	if(buf[3]&0x80) y=-y;
 
 	return y;
 }
 
-int bspatch(const uint8_t* old, int64_t oldsize, uint8_t* new, int64_t newsize, struct bspatch_stream* stream)
+int bspatch(const uint8_t* old, int32_t oldsize, uint8_t* new, int32_t newsize, struct bspatch_stream* stream)
 {
-	uint8_t buf[8];
-	int64_t oldpos,newpos;
-	int64_t ctrl[3];
-	int64_t i;
+	uint8_t buf[4];
+	int32_t oldpos,newpos;
+	int32_t ctrl[3];
+	int32_t i;
 
 	oldpos=0;newpos=0;
 	while(newpos<newsize) {
 		/* Read control data */
 		for(i=0;i<=2;i++) {
-			if (stream->read(stream, buf, 8))
+			if (stream->read(stream, buf, 4))
 				return -1;
 			ctrl[i]=offtin(buf);
 		};
@@ -97,98 +93,67 @@ int bspatch(const uint8_t* old, int64_t oldsize, uint8_t* new, int64_t newsize, 
 	return 0;
 }
 
-#if defined(BSPATCH_EXECUTABLE)
+#include "bsdiff.h"
+#if BS_BUILD_BINARY && !BS_DIFF_BINARY
 
-#include <bzlib.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <err.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <unistd.h>
 #include <fcntl.h>
 
+static int offset = 0;
 static int bz2_read(const struct bspatch_stream* stream, void* buffer, int length)
 {
-	int n;
-	int bz2err;
-	BZFILE* bz2;
-
-	bz2 = (BZFILE*)stream->opaque;
-	n = BZ2_bzRead(&bz2err, bz2, buffer, length);
-	if (n != length)
-		return -1;
+	uint8_t* diff = (uint8_t*)stream->opaque;
+	memcpy(buffer, &diff[offset], length);
+	offset += length;
 
 	return 0;
+}
+
+static uint8_t* readFile(const char* file, int* pSize)
+{
+	FILE* f = fopen(file, "rb");
+	fseek(f, 0, SEEK_END);
+	long size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	uint8_t* buf = (uint8_t*)malloc(size);
+	if (buf)
+		fread(buf, 1, size, f);
+
+	*pSize = size;
+	return buf;
 }
 
 int main(int argc,char * argv[])
 {
-	FILE * f;
-	int fd;
-	int bz2err;
-	uint8_t header[24];
-	uint8_t *old, *new;
-	int64_t oldsize, newsize;
-	BZFILE* bz2;
-	struct bspatch_stream stream;
-	struct stat sb;
-
-	if(argc!=4) errx(1,"usage: %s oldfile newfile patchfile\n",argv[0]);
-
-	/* Open patch file */
-	if ((f = fopen(argv[3], "r")) == NULL)
-		err(1, "fopen(%s)", argv[3]);
-
-	/* Read header */
-	if (fread(header, 1, 24, f) != 24) {
-		if (feof(f))
-			errx(1, "Corrupt patch\n");
-		err(1, "fread(%s)", argv[3]);
+	if (argc != 4) {
+		printf("usage: %s oldfile newfile patchfile\n", argv[0]);
+		return -1;
 	}
 
-	/* Check for appropriate magic */
-	if (memcmp(header, "ENDSLEY/BSDIFF43", 16) != 0)
-		errx(1, "Corrupt patch\n");
+	int oldsize, diffSize;
+	uint8_t* old = readFile(argv[1], &oldsize);
+	uint8_t* diff = readFile(argv[3], &diffSize);
+	int newsize = ((int*)diff)[0];
+	uint8_t* new = malloc(newsize);
 
-	/* Read lengths from header */
-	newsize=offtin(header+16);
-	if(newsize<0)
-		errx(1,"Corrupt patch\n");
-
-	/* Close patch file and re-open it via libbzip2 at the right places */
-	if(((fd=open(argv[1],O_RDONLY,0))<0) ||
-		((oldsize=lseek(fd,0,SEEK_END))==-1) ||
-		((old=malloc(oldsize+1))==NULL) ||
-		(lseek(fd,0,SEEK_SET)!=0) ||
-		(read(fd,old,oldsize)!=oldsize) ||
-		(fstat(fd, &sb)) ||
-		(close(fd)==-1)) err(1,"%s",argv[1]);
-	if((new=malloc(newsize+1))==NULL) err(1,NULL);
-
-	if (NULL == (bz2 = BZ2_bzReadOpen(&bz2err, f, 0, 0, NULL, 0)))
-		errx(1, "BZ2_bzReadOpen, bz2err=%d", bz2err);
-
+	struct bspatch_stream stream;
 	stream.read = bz2_read;
-	stream.opaque = bz2;
+	stream.opaque = diff + 4;
 	if (bspatch(old, oldsize, new, newsize, &stream))
-		errx(1, "bspatch");
+		return 1;
 
 	/* Clean up the bzip2 reads */
-	BZ2_bzReadClose(&bz2err, bz2);
-	fclose(f);
-
 	/* Write the new file */
-	if(((fd=open(argv[2],O_CREAT|O_TRUNC|O_WRONLY,sb.st_mode))<0) ||
-		(write(fd,new,newsize)!=newsize) || (close(fd)==-1))
-		err(1,"%s",argv[2]);
-
-	free(new);
-	free(old);
+	FILE* newfile = fopen(argv[2], "wb");
+	fwrite(new, 1, newsize, newfile);
+	fclose(newfile);
 
 	return 0;
 }
-
 #endif
