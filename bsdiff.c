@@ -149,7 +149,7 @@ static int32_t matchlen(const uint8_t *old,int32_t oldsize,const uint8_t *new,in
 static int32_t search(const int32_t *I,const uint8_t *old,int32_t oldsize,
 		const uint8_t *new,int32_t newsize,int32_t st,int32_t en,int32_t *pos)
 {
-	int32_t x,y;
+	int32_t x,y,cmpsize,res;
 
 	if(en-st<2) {
 		x=matchlen(old+I[st],oldsize-I[st],new,newsize);
@@ -165,7 +165,9 @@ static int32_t search(const int32_t *I,const uint8_t *old,int32_t oldsize,
 	};
 
 	x=st+(en-st)/2;
-	if(memcmp(old+I[x],new,MIN(oldsize-I[x],newsize))<0) {
+	cmpsize=MIN(oldsize-I[x],newsize);
+	res=memcmp(old+I[x],new,cmpsize);
+	if ((res<0) || ((res==0) && (cmpsize<newsize))) {
 		return search(I,old,oldsize,new,newsize,x,en,pos);
 	} else {
 		return search(I,old,oldsize,new,newsize,st,x,pos);
