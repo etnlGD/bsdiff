@@ -264,6 +264,8 @@ static int bsdiff_internal(const struct bsdiff_request req)
 			if(((len==oldscore) && (len!=0)) || 
 				(len>oldscore+8)) break;
 
+			if (len>oldscore && len>1024*10) break;
+
 			if((scan+lastoffset<req.oldsize) &&
 				(req.old[scan+lastoffset] == req.new[scan]))
 				oldscore--;
